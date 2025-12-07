@@ -2,7 +2,6 @@ import time
 import os 
 import re 
 import msvcrt 
-import urllib.parse 
 from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -15,7 +14,6 @@ from urllib3.exceptions import ReadTimeoutError
 from selenium.common.exceptions import TimeoutException, WebDriverException, StaleElementReferenceException
 
 # Cấu hình Mặc định
-FANQIE_DEFAULT_TEMPLATE = "https://fanqienovel.com/library/audience1-cat2-19-stat1-count0/page_{}?sort=newest"
 SANGTACVIET_URL = "https://sangtacviet.app/"
 SCROLL_TIMES = 3  
 
@@ -42,8 +40,14 @@ def setup_driver():
 
 def get_book_id(url):
     if not url: return None
-    match = re.search(r'/page/(\d+)', url)
-    if match: return match.group(1)
+    # ID Fanqie: /page/123456
+    match_fanqie = re.search(r'/page/(\d+)', url)
+    if match_fanqie: return match_fanqie.group(1)
+    
+    # ID Jjwxc: novelid=123456
+    match_jjwxc = re.search(r'novelid=(\d+)', url)
+    if match_jjwxc: return match_jjwxc.group(1)
+    
     return None
 
 def ensure_history_dir():
@@ -70,47 +74,22 @@ def save_history(book_id):
     except: pass
 
 def check_is_recent(text_content):
-    """
-    Kiểm tra xem truyện có mới cập nhật trong vòng 2 ngày không.
-    Trả về: True (Mới), False (Cũ)
-    """
-    if not text_content: return True # Không check được thì cứ lấy cho chắc
-    
-    # Các từ khóa tiếng Trung thường gặp trên Fanqie
-    # 刚刚(vừa xong), 分钟(phút), 小时(giờ) -> Chắc chắn mới
-    if any(k in text_content for k in ["刚刚", "分钟", "小时", "Just now", "minutes", "hours"]):
+    """Kiểm tra ngày cập nhật (chủ yếu cho Fanqie)"""
+    if not text_content: return True 
+    if any(k in text_content for k in ["刚刚", "分钟", "小时", "Just now", "minutes", "hours", "昨天", "前天", "Yesterday"]):
         return True
     
-    # Hôm qua (昨天), Hôm kia (前天) -> Chắc chắn mới (<= 2 ngày)
-    if any(k in text_content for k in ["昨天", "前天", "Yesterday", "day before"]):
-        return True
-    
-    # X ngày trước (X天前)
-    # Tìm số ngày
     day_match = re.search(r'(\d+)\s*(天前|days ago)', text_content)
     if day_match:
-        days = int(day_match.group(1))
-        if days <= 2:
-            return True
-        else:
-            print(f"-> Truyện cũ: {days} ngày trước (> 2 ngày)")
-            return False
+        return int(day_match.group(1)) <= 2
 
-    # Kiểm tra ngày tháng cụ thể (YYYY-MM-DD)
     date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', text_content)
     if date_match:
         try:
-            date_str = date_match.group(0)
-            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-            delta = datetime.now() - date_obj
-            if delta.days <= 2:
-                return True
-            else:
-                print(f"-> Truyện cũ: {date_str} ({delta.days} ngày trước)")
-                return False
+            date_obj = datetime.strptime(date_match.group(0), "%Y-%m-%d")
+            return (datetime.now() - date_obj).days <= 2
         except: pass
 
-    # Mặc định trả về True nếu không tìm thấy thông tin ngày (để tránh bỏ sót)
     return True
 
 def login_to_stv(driver, wait):
@@ -144,10 +123,14 @@ def reset_stv_tab(driver, original_window):
     try:
         driver.get(SANGTACVIET_URL)
         return True
-    except:
-        return False
+    except: return False
 
-def run_automation(driver, wait, custom_url=None):
+def run_automation(driver, wait, custom_url, source_type="fanqie"):
+    """
+    Hàm chạy auto.
+    custom_url: Bắt buộc phải có.
+    source_type: 'fanqie' hoặc 'jjwxc'
+    """
     processed_ids = load_history()
     print(f"\n[*] Lịch sử: {len(processed_ids)} ID.")
 
@@ -155,86 +138,98 @@ def run_automation(driver, wait, custom_url=None):
     current_page = 1
     single_page_mode = False 
 
-    if custom_url:
+    # --- XỬ LÝ URL ---
+    if source_type == "jjwxc":
+        match = re.search(r'page=(\d+)', custom_url)
+        if match:
+            current_page = int(match.group(1))
+            url_template = custom_url.replace(f"page={current_page}", "page={}")
+            print(f"[*] Jjwxc Mode: Bắt đầu từ trang {current_page}...")
+        else:
+            single_page_mode = True
+            print("[*] Jjwxc Mode: Chạy 1 trang duy nhất.")
+    else:
+        # Fanqie
         match = re.search(r'page_(\d+)', custom_url)
         if match:
             current_page = int(match.group(1)) 
             url_template = custom_url.replace(f"page_{current_page}", "page_{}")
         else:
             single_page_mode = True
-    else:
-        url_template = FANQIE_DEFAULT_TEMPLATE
-        current_page = 1
 
-    stop_scan_completely = False # Cờ để dừng toàn bộ tool khi gặp truyện cũ
+    stop_scan_completely = False 
 
     while True:
-        if stop_scan_completely:
-            print("\n[STOP] Đã gặp truyện cũ quá 2 ngày. Dừng quét.")
+        # Kiểm tra phím q ngay đầu vòng lặp trang
+        if msvcrt.kbhit() and msvcrt.getch().lower() == b'q':
+            print("\n[!!!] Đã nhận lệnh DỪNG (Tại màn hình chuyển trang).")
             break
+
+        if stop_scan_completely: break
 
         if single_page_mode: target_url = custom_url
         else: target_url = url_template.format(current_page)
 
         print(f"\n==================================================")
-        print(f"[*] QUÉT TRANG: {current_page if not single_page_mode else 'Custom/Search'}")
+        print(f"[*] QUÉT TRANG: {current_page} ({source_type.upper()})")
         
-        # 1. QUÉT FANQIE
+        # 1. QUÉT LINK (TÙY NGUỒN)
+        new_books = []
         try:
             driver.set_page_load_timeout(20) 
             driver.get(target_url)
-            time.sleep(1.5) 
-            for i in range(SCROLL_TIMES):
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(0.5)
-
-            # Lấy tất cả các thẻ link truyện
-            story_elements = driver.find_elements(By.CSS_SELECTOR, "a[href^='/page/']")
-            new_books = []
+            time.sleep(1.5)
             
-            for elem in story_elements:
-                raw_href = elem.get_attribute('href')
-                if raw_href and "fanqienovel.com/page/" in raw_href:
-                    book_id = get_book_id(raw_href)
-                    if book_id and book_id not in processed_ids:
-                        if not any(item[0] == book_id for item in new_books):
-                            
-                            # --- KIỂM TRA NGÀY CẬP NHẬT ---
-                            # Lấy nội dung text của thẻ chứa (thường là cha của thẻ a hoặc thẻ a)
-                            # Fanqie thường để thông tin update ngay bên cạnh hoặc trong thẻ cha
-                            try:
-                                # Lấy text của thẻ cha bao quanh link để tìm thông tin ngày
-                                book_text = elem.find_element(By.XPATH, "./../..").text
-                            except:
-                                book_text = elem.text # Fallback
-                            
-                            if check_is_recent(book_text):
+            # --- LOGIC QUÉT FANQIE ---
+            if source_type == "fanqie":
+                for i in range(SCROLL_TIMES):
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(0.5)
+                story_elements = driver.find_elements(By.CSS_SELECTOR, "a[href^='/page/']")
+                
+                for elem in story_elements:
+                    raw_href = elem.get_attribute('href')
+                    if raw_href and "fanqienovel.com/page/" in raw_href:
+                        book_id = get_book_id(raw_href)
+                        if book_id and book_id not in processed_ids:
+                            if not any(item[0] == book_id for item in new_books):
+                                try: book_text = elem.find_element(By.XPATH, "./../..").text
+                                except: book_text = elem.text
+                                
+                                if check_is_recent(book_text):
+                                    new_books.append((book_id, raw_href))
+                                else:
+                                    if "sort=newest" in target_url:
+                                        stop_scan_completely = True; break
+            
+            # --- LOGIC QUÉT JJWXC ---
+            elif source_type == "jjwxc":
+                elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='onebook.php?novelid=']")
+                for elem in elems:
+                    raw_href = elem.get_attribute('href')
+                    if raw_href and "novelid=" in raw_href and "chapterid=" not in raw_href:
+                        book_id = get_book_id(raw_href)
+                        if book_id and book_id not in processed_ids:
+                            if not any(item[0] == book_id for item in new_books):
                                 new_books.append((book_id, raw_href))
-                            else:
-                                # Nếu gặp truyện cũ (> 2 ngày) và đang sort=newest
-                                # Thì tất cả truyện sau đó cũng cũ -> DỪNG LUÔN
-                                if "sort=newest" in target_url or not custom_url:
-                                    print(f"-> Phát hiện truyện cũ ID {book_id}. Dừng quét vì danh sách đã hết truyện mới.")
-                                    stop_scan_completely = True
-                                    break
-                                # Nếu không phải sort=newest thì chỉ bỏ qua truyện này thôi
-        
+
         except Exception as e:
-            print(f"[!] Lỗi quét Fanqie: {e}. Thử lại...")
+            print(f"[!] Lỗi quét link: {e}. Thử lại...")
             continue
 
         if not new_books:
-            if stop_scan_completely: break
-            print(f"[!] Không có truyện mới (hoặc đã làm hết) ở trang này.")
+            if stop_scan_completely: 
+                print("\n[STOP] Đã gặp truyện cũ. Dừng.")
+                break
+            
+            print(f"[!] Không có truyện mới ở trang này.")
             if single_page_mode: break
             else:
                 current_page += 1
-                if current_page > 1000:
-                    print("\n[LOOP] Quay về trang 1...")
-                    current_page = 1
+                if current_page > 1000: current_page = 1
                 continue
 
-        print(f"[+] Tìm thấy {len(new_books)} truyện MỚI (<= 2 ngày).")
+        print(f"[+] Tìm thấy {len(new_books)} truyện MỚI.")
 
         # 2. XỬ LÝ SANGTACVIET
         print("=> Bắt đầu nhúng (Nhấn 'q' để DỪNG)...")
@@ -249,10 +244,13 @@ def run_automation(driver, wait, custom_url=None):
         stop_requested = False
 
         for index, (book_id, link) in enumerate(new_books):
-            if msvcrt.kbhit() and msvcrt.getch().lower() == b'q':
-                print("\n[!!!] Đã nhận lệnh DỪNG.")
-                stop_requested = True
-                break
+            # --- KIỂM TRA PHÍM TẮT ---
+            if msvcrt.kbhit():
+                key = msvcrt.getch()
+                if key.lower() == b'q':
+                    print("\n[!!!] Đã nhận lệnh DỪNG.")
+                    stop_requested = True
+                    break
             
             if book_id in processed_ids: continue
 
@@ -290,7 +288,7 @@ def run_automation(driver, wait, custom_url=None):
         if stop_requested: break
         if stop_scan_completely: break
             
-        print(f"\n[DONE] Xong trang.")
+        print(f"\n[DONE] Xong trang {current_page}.")
         
         if single_page_mode: break 
         else: 
@@ -305,16 +303,16 @@ def main():
     while True:
         os.system('cls' if os.name == 'nt' else 'clear')
         print("\n================ MENU TOOL NHÚNG TRUYỆN ================")
-        print("1. Mở Sangtacviet")
-        print("2. Chạy Auto (Mặc định: Fanqie)")
-        print("3. Chạy Auto (Nhập link)")
-        print("4. Chạy Auto (Tìm theo từ khóa)")
-        print("5. Xem tổng số ID đã làm")
-        print("6. Thoát")
+        print("1. Mở Sangtacviet (Để đăng nhập)")
+        print("2. Chạy Auto (Nguồn Fanqie - Nhập Link)")
+        print("3. Chạy Auto (Nguồn Jjwxc/Tấn Giang - Nhập Link)")
+        print("4. Xem tổng số ID đã làm")
+        print("5. Thoát")
+        print("========================================================")
         
-        choice = input("Chọn chức năng (1-6): ").strip()
+        choice = input("Chọn chức năng (1-5): ").strip()
         
-        if choice in ['1', '2', '3', '4']:
+        if choice in ['1', '2', '3']:
             if driver is None:
                 print("\n[*] Khởi động Chrome...")
                 try:
@@ -329,26 +327,26 @@ def main():
                 login_to_stv(driver, wait)
                 input("\n-> Enter về Menu...")
             elif choice == '2':
-                run_automation(driver, wait, custom_url=None)
+                lnk = input("\nLink Fanqie: ").strip()
+                if lnk: run_automation(driver, wait, custom_url=lnk, source_type="fanqie")
+                else: print("Link trống!")
                 input("\n-> Enter về Menu...")
             elif choice == '3':
-                lnk = input("\nLink Fanqie: ").strip()
-                if lnk: run_automation(driver, wait, custom_url=lnk)
-                input("\n-> Enter về Menu...")
-            elif choice == '4':
-                keyword = input("\nNhập từ khóa (Ví dụ: hệ thống, system...): ").strip()
-                if keyword:
-                    search_url = f"https://fanqienovel.com/search?q={urllib.parse.quote(keyword)}"
-                    print(f"-> Đang tìm kiếm: {search_url}")
-                    run_automation(driver, wait, custom_url=search_url)
+                print("\n--- NHẬP LINK JJWXC ---")
+                print("Ví dụ: https://www.jjwxc.net/bookbase_slave.php?t=2...&page=1...")
+                lnk = input("Dán link vào đây: ").strip()
+                if lnk: 
+                    run_automation(driver, wait, custom_url=lnk, source_type="jjwxc")
+                else:
+                    print("Link trống!")
                 input("\n-> Enter về Menu...")
 
-        elif choice == '5':
+        elif choice == '4':
             current_ids = load_history()
             print(f"\n[INFO] Tổng số ID đã lưu: {len(current_ids)}")
             input("\n-> Nhấn Enter để quay lại Menu...")
         
-        elif choice == '6':
+        elif choice == '5':
             if driver: 
                 try: driver.quit()
                 except: pass
