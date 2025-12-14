@@ -55,6 +55,10 @@ def get_book_id(url):
     # ID Ciweimao: /book/100xxxx
     match_ciweimao = re.search(r'/book/(\d+)', url)
     if match_ciweimao: return match_ciweimao.group(1)
+
+    # ID SFACG: /Novel/12345/
+    match_sfacg = re.search(r'/Novel/(\d+)/', url)
+    if match_sfacg: return match_sfacg.group(1)
     
     return None
 
@@ -136,7 +140,7 @@ def reset_stv_tab(driver, original_window):
 def run_automation(driver, wait, custom_url, source_type="fanqie"):
     """
     Hàm chạy auto đa năng.
-    source_type: 'fanqie', 'jjwxc', 'qimao', 'ciweimao'
+    source_type: 'fanqie', 'jjwxc', 'qimao', 'ciweimao', 'sfacg'
     """
     processed_ids = load_history()
     print(f"\n[*] Lịch sử: {len(processed_ids)} ID.")
@@ -177,6 +181,22 @@ def run_automation(driver, wait, custom_url, source_type="fanqie"):
         else:
             single_page_mode = True
             print("[*] Ciweimao Mode: Chạy 1 trang duy nhất.")
+
+    elif source_type == "sfacg":
+        # SFACG URL: ...&PageIndex=2
+        match = re.search(r'PageIndex=(\d+)', custom_url, re.IGNORECASE)
+        if match:
+            current_page = int(match.group(1))
+            # Thay thế PageIndex=X bằng PageIndex={}
+            url_template = custom_url.replace(f"PageIndex={current_page}", "PageIndex={}")
+            # Xử lý trường hợp URL chữ hoa/thường khác nhau nếu cần, nhưng replace chuỗi chuẩn là an toàn nhất
+            if url_template == custom_url: # Nếu replace thất bại do case sensitive
+                 url_template = re.sub(r'PageIndex=\d+', 'PageIndex={}', custom_url, flags=re.IGNORECASE)
+            
+            print(f"[*] SFACG Mode: Bắt đầu từ trang {current_page}...")
+        else:
+            single_page_mode = True
+            print("[*] SFACG Mode: Chạy 1 trang duy nhất (Hoặc thiếu PageIndex=X).")
             
     else:
         # Fanqie
@@ -233,6 +253,13 @@ def run_automation(driver, wait, custom_url, source_type="fanqie"):
                     time.sleep(0.5)
                 elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/book/']")
 
+            elif source_type == "sfacg":
+                # SFACG list load khá nhanh, nhưng cứ cuộn cho chắc
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(1)
+                # Tìm link chứa /Novel/ và số ID
+                elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/Novel/']")
+
             # --- LỌC VÀ LẤY ID ---
             for elem in elems:
                 raw_href = elem.get_attribute('href')
@@ -249,6 +276,10 @@ def run_automation(driver, wait, custom_url, source_type="fanqie"):
                         is_valid = True
                 elif source_type == "ciweimao":
                     if "ciweimao.com/book/" in raw_href and re.search(r'/book/\d+/?$', raw_href):
+                        is_valid = True
+                elif source_type == "sfacg":
+                    # Link SFACG chuẩn: book.sfacg.com/Novel/12345/
+                    if "book.sfacg.com/Novel/" in raw_href and re.search(r'/Novel/\d+/?$', raw_href):
                         is_valid = True
                 
                 if is_valid:
@@ -363,13 +394,14 @@ def main():
         print("3. Chạy Auto (Nguồn Jjwxc - Tấn Giang)")
         print("4. Chạy Auto (Nguồn Qimao - Thất Miêu)")
         print("5. Chạy Auto (Nguồn Ciweimao - Thất Vĩ Miêu)")
-        print("6. Xem tổng số ID đã làm")
-        print("7. Thoát")
+        print("6. Chạy Auto (Nguồn SFACG - B菠萝包) [MỚI]")
+        print("7. Xem tổng số ID đã làm")
+        print("8. Thoát")
         print("========================================================")
         
-        choice = input("Chọn chức năng (1-7): ").strip()
+        choice = input("Chọn chức năng (1-8): ").strip()
         
-        if choice in ['1', '2', '3', '4', '5']:
+        if choice in ['1', '2', '3', '4', '5', '6']:
             if driver is None:
                 print("\n[*] Khởi động Chrome...")
                 try:
@@ -415,13 +447,22 @@ def main():
                 else:
                     print("Link trống!")
                 input("\n-> Enter về Menu...")
+            elif choice == '6':
+                print("\n--- NHẬP LINK SFACG ---")
+                print("Ví dụ: https://book.sfacg.com/List/default.aspx?ud=7&PageIndex=2")
+                lnk = input("Dán link: ").strip()
+                if lnk: 
+                    run_automation(driver, wait, custom_url=lnk, source_type="sfacg")
+                else:
+                    print("Link trống!")
+                input("\n-> Enter về Menu...")
 
-        elif choice == '6':
+        elif choice == '7':
             current_ids = load_history()
             print(f"\n[INFO] Tổng số ID đã lưu: {len(current_ids)}")
             input("\n-> Nhấn Enter để quay lại Menu...")
         
-        elif choice == '7':
+        elif choice == '8':
             if driver: 
                 try: driver.quit()
                 except: pass
