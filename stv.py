@@ -86,22 +86,61 @@ def save_history(book_id):
     except: pass
 
 def check_is_recent(text_content):
-    """Kiểm tra ngày cập nhật (chủ yếu cho Fanqie)"""
-    if not text_content: return True 
-    if any(k in text_content for k in ["刚刚", "分钟", "小时", "Just now", "minutes", "hours", "昨天", "前天", "Yesterday"]):
+    """
+    Kiểm tra xem truyện có mới cập nhật trong vòng 2 ngày không.
+    Trả về: True (Mới), False (Cũ)
+    """
+    if not text_content: return True # Không tìm thấy text thì mặc định lấy
+    
+    current_year = datetime.now().year
+    
+    # 1. Các từ khóa tiếng Trung chỉ thời gian gần
+    # 刚刚(vừa xong), 分钟(phút), 小时(giờ), 今天(hôm nay) -> Mới
+    if any(k in text_content for k in ["刚刚", "分钟", "小时", "今天", "Just now", "minutes", "hours", "Today"]):
         return True
     
+    # 昨天(Hôm qua), 前天(Hôm kia) -> Mới
+    if any(k in text_content for k in ["昨天", "前天", "Yesterday", "day before"]):
+        return True
+    
+    # 2. X ngày trước (X天前)
     day_match = re.search(r'(\d+)\s*(天前|days ago)', text_content)
     if day_match:
-        return int(day_match.group(1)) <= 2
+        days = int(day_match.group(1))
+        return days <= 2
 
-    date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', text_content)
-    if date_match:
+    # 3. Định dạng YYYY-MM-DD (Ví dụ: 2024-05-20)
+    date_match_full = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', text_content)
+    if date_match_full:
         try:
-            date_obj = datetime.strptime(date_match.group(0), "%Y-%m-%d")
-            return (datetime.now() - date_obj).days <= 2
+            date_obj = datetime.strptime(date_match_full.group(0), "%Y-%m-%d")
+            delta = datetime.now() - date_obj
+            if delta.days > 2:
+                # print(f"   -> Loại: Cũ ({date_match_full.group(0)})")
+                return False
+            return True
         except: pass
 
+    # 4. Định dạng MM-DD (Ví dụ: 05-20, thường là năm nay)
+    date_match_short = re.search(r'(\d{1,2})-(\d{1,2})', text_content)
+    if date_match_short:
+        try:
+            # Giả định là năm nay
+            date_str = f"{current_year}-{date_match_short.group(1)}-{date_match_short.group(2)}"
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            
+            # Xử lý trường hợp sang năm mới nhưng truyện update cuối năm ngoái (VD: hiện tại tháng 1, truyện tháng 12)
+            if date_obj > datetime.now():
+                date_obj = date_obj.replace(year=current_year - 1)
+                
+            delta = datetime.now() - date_obj
+            if delta.days > 2:
+                # print(f"   -> Loại: Cũ ({date_match_short.group(0)})")
+                return False
+            return True
+        except: pass
+
+    # Mặc định trả về True nếu không parse được ngày (để tránh bỏ sót)
     return True
 
 def login_to_stv(driver, wait):
@@ -183,20 +222,16 @@ def run_automation(driver, wait, custom_url, source_type="fanqie"):
             print("[*] Ciweimao Mode: Chạy 1 trang duy nhất.")
 
     elif source_type == "sfacg":
-        # SFACG URL: ...&PageIndex=2
         match = re.search(r'PageIndex=(\d+)', custom_url, re.IGNORECASE)
         if match:
             current_page = int(match.group(1))
-            # Thay thế PageIndex=X bằng PageIndex={}
             url_template = custom_url.replace(f"PageIndex={current_page}", "PageIndex={}")
-            # Xử lý trường hợp URL chữ hoa/thường khác nhau nếu cần, nhưng replace chuỗi chuẩn là an toàn nhất
-            if url_template == custom_url: # Nếu replace thất bại do case sensitive
+            if url_template == custom_url:
                  url_template = re.sub(r'PageIndex=\d+', 'PageIndex={}', custom_url, flags=re.IGNORECASE)
-            
             print(f"[*] SFACG Mode: Bắt đầu từ trang {current_page}...")
         else:
             single_page_mode = True
-            print("[*] SFACG Mode: Chạy 1 trang duy nhất (Hoặc thiếu PageIndex=X).")
+            print("[*] SFACG Mode: Chạy 1 trang duy nhất.")
             
     else:
         # Fanqie
@@ -254,46 +289,46 @@ def run_automation(driver, wait, custom_url, source_type="fanqie"):
                 elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/book/']")
 
             elif source_type == "sfacg":
-                # SFACG list load khá nhanh, nhưng cứ cuộn cho chắc
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(1)
-                # Tìm link chứa /Novel/ và số ID
                 elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/Novel/']")
 
-            # --- LỌC VÀ LẤY ID ---
+            # --- LỌC VÀ LẤY ID (KÈM CHECK NGÀY) ---
             for elem in elems:
                 raw_href = elem.get_attribute('href')
                 if not raw_href: continue
                 
                 is_valid = False
-                
-                if source_type == "fanqie" and "fanqienovel.com/page/" in raw_href: 
-                    is_valid = True
-                elif source_type == "jjwxc" and "novelid=" in raw_href and "chapterid=" not in raw_href: 
-                    is_valid = True
+                if source_type == "fanqie" and "fanqienovel.com/page/" in raw_href: is_valid = True
+                elif source_type == "jjwxc" and "novelid=" in raw_href and "chapterid=" not in raw_href: is_valid = True
                 elif source_type == "qimao":
-                    if "qimao.com/shuku/" in raw_href and re.search(r'/shuku/\d+/?$', raw_href):
-                        is_valid = True
+                    if "qimao.com/shuku/" in raw_href and re.search(r'/shuku/\d+/?$', raw_href): is_valid = True
                 elif source_type == "ciweimao":
-                    if "ciweimao.com/book/" in raw_href and re.search(r'/book/\d+/?$', raw_href):
-                        is_valid = True
+                    if "ciweimao.com/book/" in raw_href and re.search(r'/book/\d+/?$', raw_href): is_valid = True
                 elif source_type == "sfacg":
-                    # Link SFACG chuẩn: book.sfacg.com/Novel/12345/
-                    if "book.sfacg.com/Novel/" in raw_href and re.search(r'/Novel/\d+/?$', raw_href):
-                        is_valid = True
+                    if "book.sfacg.com/Novel/" in raw_href and re.search(r'/Novel/\d+/?$', raw_href): is_valid = True
                 
                 if is_valid:
                     book_id = get_book_id(raw_href)
                     if book_id and book_id not in processed_ids:
                         if not any(item[0] == book_id for item in new_books):
-                            # Check ngày Fanqie
-                            if source_type == "fanqie":
-                                try: book_text = elem.find_element(By.XPATH, "./../..").text
-                                except: book_text = elem.text
-                                if check_is_recent(book_text): new_books.append((book_id, raw_href))
-                                elif "sort=newest" in target_url: stop_scan_completely = True; break
-                            else:
+                            
+                            # --- CHECK NGÀY CẬP NHẬT ---
+                            book_text = ""
+                            try:
+                                if source_type == "jjwxc":
+                                    # Jjwxc: Ngày ở cùng dòng tr
+                                    book_text = elem.find_element(By.XPATH, "./ancestor::tr").text
+                                else:
+                                    # Các nguồn khác: Thử lấy text của thẻ cha bao ngoài
+                                    # Lấy lên 2 cấp (thường là thẻ div/li chứa sách)
+                                    book_text = elem.find_element(By.XPATH, "./../..").text
+                            except:
+                                book_text = elem.text # Fallback
+                            
+                            if check_is_recent(book_text):
                                 new_books.append((book_id, raw_href))
+                            # ---------------------------
 
         except Exception as e:
             print(f"[!] Lỗi quét link: {e}. Thử lại...")
@@ -301,18 +336,16 @@ def run_automation(driver, wait, custom_url, source_type="fanqie"):
             continue
 
         if not new_books:
-            if stop_scan_completely: 
-                print("\n[STOP] Đã gặp truyện cũ. Dừng.")
-                break
-            
-            print(f"[!] Không có truyện mới ở trang này.")
+            print(f"[!] Không có truyện mới (<= 2 ngày) ở trang này.")
+            # Nếu đang chạy auto nhiều trang mà không thấy truyện mới, vẫn tiếp tục trang sau
+            # Vì có thể trang này toàn truyện cũ nhưng trang sau lại có truyện mới (tùy cách sắp xếp)
             if single_page_mode: break
             else:
                 current_page += 1
                 if current_page > 1000: current_page = 1
                 continue
 
-        print(f"[+] Tìm thấy {len(new_books)} truyện MỚI.")
+        print(f"[+] Tìm thấy {len(new_books)} truyện MỚI (<= 2 ngày).")
 
         # 2. XỬ LÝ SANGTACVIET
         print("=> Bắt đầu nhúng (Nhấn 'q' để DỪNG)...")
@@ -394,7 +427,7 @@ def main():
         print("3. Chạy Auto (Nguồn Jjwxc - Tấn Giang)")
         print("4. Chạy Auto (Nguồn Qimao - Thất Miêu)")
         print("5. Chạy Auto (Nguồn Ciweimao - Thất Vĩ Miêu)")
-        print("6. Chạy Auto (Nguồn SFACG - B菠萝包) [MỚI]")
+        print("6. Chạy Auto (Nguồn SFACG - B菠萝包)")
         print("7. Xem tổng số ID đã làm")
         print("8. Thoát")
         print("========================================================")
@@ -449,7 +482,7 @@ def main():
                 input("\n-> Enter về Menu...")
             elif choice == '6':
                 print("\n--- NHẬP LINK SFACG ---")
-                print("Ví dụ: https://book.sfacg.com/List/default.aspx?ud=7&PageIndex=2")
+                print("Ví dụ: ...&PageIndex=2")
                 lnk = input("Dán link: ").strip()
                 if lnk: 
                     run_automation(driver, wait, custom_url=lnk, source_type="sfacg")
