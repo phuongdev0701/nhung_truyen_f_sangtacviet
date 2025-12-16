@@ -428,35 +428,6 @@ def run_concurrent_mode(custom_url, source_type):
     t_embedder.join()
     print("[Main] Đã dừng. (Chrome vẫn mở để bạn dùng tiếp).")
 
-def open_stv_only():
-    """Mở STV bằng driver toàn cục để tái sử dụng"""
-    global global_embedder_driver
-    print("[*] Đang mở trình duyệt Embedder (Phải)...")
-    global_embedder_driver = get_active_driver(global_embedder_driver, position=(960, 0))
-    driver = global_embedder_driver
-    
-    print("--- Đang truy cập Sangtacviet ---")
-    try:
-        driver.get(SANGTACVIET_URL)
-        # Login logic (giống ở trên)...
-        try:
-            wait = WebDriverWait(driver, 5)
-            login_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Đăng nhập')] | //button[contains(text(), 'Đăng nhập')]")))
-            login_btn.click()
-            wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "input[name='username']"))).send_keys(STV_USERNAME)
-            driver.find_element(By.CSS_SELECTOR, "input[name='password']").send_keys(STV_PASSWORD)
-            submit = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], div.modal-footer button")
-            if not submit: submit = driver.find_element(By.XPATH, "//button[contains(text(), 'Đăng nhập')]")
-            submit.click()
-            print(f"-> Đã gửi đăng nhập: {STV_USERNAME}")
-        except:
-            print("-> Đã sẵn sàng.")
-            
-        print("\n-> Trình duyệt đã mở. Nhấn Enter để quay về Menu.")
-        input()
-    except Exception as e:
-        print(f"Lỗi: {e}")
-
 def open_both_browsers_only():
     """Mở cả 2 trình duyệt Scanner và Embedder rồi treo đó"""
     global global_scanner_driver, global_embedder_driver
@@ -513,7 +484,7 @@ def main():
         print("   5. 🍍 Chạy nguồn SFACG (B菠萝包)")
         print("-----------------------------------------------------------------------")
         print("   6. 🖥️  Mở 2 Trình duyệt (Scanner & Embedder) để treo")
-        print("   7. 🌐 Mở riêng Sangtacviet (Đăng nhập)")
+        print("   7. 📊 Xem tổng số ID đã làm")
         print("   8. ❌ Thoát (Đóng tất cả)")
         print("=======================================================================")
         
@@ -540,7 +511,10 @@ def main():
         elif choice == '6':
             open_both_browsers_only()
         elif choice == '7':
-            open_stv_only()
+            current_ids = load_history()
+            print(f"\n[INFO] Tổng số truyện (ID) đã lưu trong file: {len(current_ids)}")
+            print(f"File lưu tại: {HISTORY_FILE}")
+            input("\n-> Nhấn Enter để quay lại Menu...")
         elif choice == '8':
             close_all_drivers()
             print("👋 Tạm biệt!")
