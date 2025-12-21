@@ -3,6 +3,7 @@ import os
 import re 
 import msvcrt 
 import threading
+import random
 from queue import Queue, Empty
 from datetime import datetime, timedelta
 from selenium import webdriver
@@ -103,6 +104,12 @@ def get_book_id(url):
 
     match_sfacg = re.search(r'/Novel/(\d+)/', url)
     if match_sfacg: return match_sfacg.group(1)
+
+    match_69shu = re.search(r'/(?:book|txt)/(\d+)\.htm', url)
+    if match_69shu: return match_69shu.group(1)
+
+    match_quanben5 = re.search(r'/n/([^/]+)/?', url)
+    if match_quanben5: return match_quanben5.group(1)
     
     return None
 
@@ -145,7 +152,6 @@ def check_is_recent(text_content):
             return (datetime.now() - date_obj).days <= 2
         except: pass
     
-    # Định dạng ngắn MM-DD
     date_match_short = re.search(r'(\d{1,2})-(\d{1,2})', text_content)
     if date_match_short:
         try:
@@ -163,19 +169,16 @@ def embedder_thread(processed_ids):
     """Luồng chuyên nhúng truyện vào Sangtacviet"""
     global global_embedder_driver
     
-    # Lấy hoặc tạo driver (bên phải màn hình)
     global_embedder_driver = get_active_driver(global_embedder_driver, position=(960, 0))
     driver = global_embedder_driver
     
     try:
         wait = WebDriverWait(driver, 10)
         
-        # Chỉ vào STV nếu chưa ở đó (để tránh reload không cần thiết)
         if "sangtacviet.app" not in driver.current_url:
             synchronized_print("[Embedder] Đang vào Sangtacviet...")
             try:
                 driver.get(SANGTACVIET_URL)
-                # --- LOGIN ---
                 try:
                     login_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(), 'Đăng nhập')] | //button[contains(text(), 'Đăng nhập')]")))
                     login_btn.click()
@@ -185,21 +188,18 @@ def embedder_thread(processed_ids):
                     if not submit: submit = driver.find_element(By.XPATH, "//button[contains(text(), 'Đăng nhập')]")
                     submit.click()
                     time.sleep(2)
-                except: pass # Đã đăng nhập rồi thì thôi
+                except: pass 
             except Exception as e:
                 synchronized_print(f"[Embedder] Lỗi truy cập STV: {e}")
 
         # --- VÒNG LẶP NHÚNG ---
-        # Chỉ chạy khi KHÔNG có lệnh dừng
-        while not stop_event.is_set():
-            try:
-                # Lấy link từ hàng đợi (chờ tối đa 1s để check lại stop_event)
-                task = link_queue.get(timeout=1)
-                
-                # NẾU CÓ LỆNH DỪNG -> THOÁT NGAY
-                if stop_event.is_set():
-                    break
+        while True:
+            if stop_event.is_set() and link_queue.empty():
+                synchronized_print("[Embedder] Đã xử lý hết hàng tồn. Dừng.")
+                break
 
+            try:
+                task = link_queue.get(timeout=1)
                 book_id, link = task
                 
                 if book_id in processed_ids:
@@ -208,41 +208,47 @@ def embedder_thread(processed_ids):
 
                 synchronized_print(f"-> [Nhúng] Đang xử lý ID: {book_id}")
                 
-                success = False
-                for attempt in range(2): # Thử 2 lần
-                    if stop_event.is_set(): break 
-
-                    try:
-                        driver.set_page_load_timeout(10)
-                        
-                        search_box = None
-                        try:
-                            search_box = driver.find_element(By.TAG_NAME, "input")
-                        except:
-                            driver.get(SANGTACVIET_URL)
-                            search_box = wait.until(EC.presence_of_element_located((By.TAG_NAME, "input")))
-
-                        search_box.clear()
-                        try:
-                            search_box.send_keys(Keys.CONTROL + "a")
-                            search_box.send_keys(Keys.DELETE)
-                        except: pass
-                        
-                        search_box.send_keys(link)
-                        search_box.send_keys(Keys.ENTER)
-                        
-                        save_history(book_id)
-                        processed_ids.add(book_id)
-                        synchronized_print(f"   [OK] ID {book_id} xong.")
-                        success = True
-                        break
+                # --- LOGIC NHÚNG TỐI ƯU (SKIP ERROR) ---
+                try:
+                    # Timeout ngắn 5s để phát hiện lỗi Limit nhanh
+                    driver.set_page_load_timeout(5)
                     
-                    except Exception as e:
-                        try: 
-                            # Nếu lỗi, thử quay về trang chủ, không tắt driver
-                            driver.get(SANGTACVIET_URL)
-                        except: pass
-                        time.sleep(1)
+                    search_box = None
+                    try:
+                        search_box = driver.find_element(By.TAG_NAME, "input")
+                    except:
+                        driver.get(SANGTACVIET_URL)
+                        search_box = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.TAG_NAME, "input")))
+
+                    search_box.clear()
+                    try:
+                        search_box.send_keys(Keys.CONTROL + "a")
+                        search_box.send_keys(Keys.DELETE)
+                    except: pass
+                    
+                    search_box.send_keys(link)
+                    search_box.send_keys(Keys.ENTER)
+                    
+                    # Fire & Forget
+                    time.sleep(0.5) 
+                    try:
+                        driver.get(SANGTACVIET_URL)
+                    except: pass 
+                    
+                    save_history(book_id)
+                    processed_ids.add(book_id)
+                    synchronized_print(f"   [OK] ID {book_id} (Đã gửi).")
+                
+                except Exception as e:
+                    synchronized_print(f"   [!] Lỗi/Limit: {e}")
+                    synchronized_print("   -> Đợi 5s -> Reset Tab -> BỎ QUA truyện này.")
+                    
+                    time.sleep(5) 
+                    try: 
+                        if len(driver.window_handles) > 1: driver.close()
+                        driver.switch_to.window(driver.window_handles[0])
+                        driver.get(SANGTACVIET_URL)
+                    except: pass
 
                 link_queue.task_done()
             
@@ -254,15 +260,16 @@ def embedder_thread(processed_ids):
     except Exception as e:
         synchronized_print(f"[Embedder] Crash: {e}")
     finally:
-        # KHÔNG ĐÓNG DRIVER TẠI ĐÂY
         synchronized_print("[Embedder] Đã dừng chờ lệnh mới.")
 
 # --- THREAD 2: QUÉT LINK (PRODUCER) ---
-def scanner_thread(custom_url, source_type, processed_ids):
-    """Luồng chuyên đi quét link từ các nguồn"""
+def scanner_thread(custom_url, source_type, processed_ids, loop_range=None):
+    """
+    Luồng chuyên đi quét link từ các nguồn.
+    loop_range: (start_page, end_page) nếu dùng chế độ loop
+    """
     global global_scanner_driver
     
-    # Lấy hoặc tạo driver (bên trái màn hình)
     global_scanner_driver = get_active_driver(global_scanner_driver, position=(0, 0))
     driver = global_scanner_driver
     
@@ -298,6 +305,19 @@ def scanner_thread(custom_url, source_type, processed_ids):
                 current_page = int(match.group(1))
                 url_template = re.sub(r'PageIndex=\d+', 'PageIndex={}', custom_url, flags=re.IGNORECASE)
             else: single_page_mode = True
+        elif source_type == "69shu":
+            single_page_mode = True
+            print("[*] 69shu Mode: Chạy 1 trang duy nhất.")
+        elif source_type == "quanben5":
+            match = re.search(r'_(\d+)\.html', custom_url)
+            if match:
+                current_page = int(match.group(1))
+                url_template = custom_url.replace(f"_{current_page}.html", "_{}.html")
+            elif custom_url.endswith(".html"):
+                current_page = 1
+                url_template = custom_url[:-5] + "_{}.html"
+            else:
+                single_page_mode = True
         else: # Fanqie
             match = re.search(r'page_(\d+)', custom_url)
             if match:
@@ -307,18 +327,32 @@ def scanner_thread(custom_url, source_type, processed_ids):
 
         local_queue_cache = [] 
 
-        while not stop_event.is_set():
-            if single_page_mode: target_url = custom_url
-            else: target_url = url_template.format(current_page)
+        # Nếu có loop_range (cho menu 8), ghi đè current_page
+        if loop_range:
+            current_page = loop_range[0]
+            print(f"[*] Loop Mode Activated: {loop_range[0]} -> {loop_range[1]}")
 
-            synchronized_print(f"\n[Scanner] Đang quét trang {current_page}...")
+        while not stop_event.is_set():
+            if single_page_mode: 
+                target_url = custom_url
+            else: 
+                if source_type == "quanben5" and current_page == 1:
+                    if "_{}" in url_template:
+                        target_url = url_template.replace("_{}.html", ".html")
+                    else: target_url = custom_url
+                else:
+                    target_url = url_template.format(current_page)
+
+            synchronized_print(f"\n[Scanner] Đang quét trang {current_page if not single_page_mode else 'Custom'}...")
             
             try:
                 driver.set_page_load_timeout(30)
                 driver.get(target_url)
-                time.sleep(1.5)
                 
-                # Cuộn trang
+                # --- TỐI ƯU HÓA TỐC ĐỘ ---
+                time.sleep(0.5)
+                
+                # CHỈ CUỘN TRANG VỚI CÁC NGUỒN CẦN THIẾT
                 if source_type in ["fanqie", "qimao", "ciweimao", "sfacg"]:
                     for _ in range(SCROLL_TIMES):
                         if stop_event.is_set(): break
@@ -334,6 +368,8 @@ def scanner_thread(custom_url, source_type, processed_ids):
                 elif source_type == "qimao": elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/shuku/']")
                 elif source_type == "ciweimao": elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/book/']")
                 elif source_type == "sfacg": elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/Novel/']")
+                elif source_type == "69shu": elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/book/'], a[href*='/txt/']")
+                elif source_type == "quanben5": elems = driver.find_elements(By.CSS_SELECTOR, "a[href*='/n/']")
 
                 found_new_on_page = False
                 
@@ -349,6 +385,8 @@ def scanner_thread(custom_url, source_type, processed_ids):
                     elif source_type == "qimao" and "/shuku/" in raw_href and re.search(r'/shuku/\d+/?$', raw_href): is_valid = True
                     elif source_type == "ciweimao" and "/book/" in raw_href and re.search(r'/book/\d+/?$', raw_href): is_valid = True
                     elif source_type == "sfacg" and "/Novel/" in raw_href and re.search(r'/Novel/\d+/?$', raw_href): is_valid = True
+                    elif source_type == "69shu" and (".htm" in raw_href): is_valid = True
+                    elif source_type == "quanben5" and "/n/" in raw_href: is_valid = True
                     
                     if is_valid:
                         book_id = get_book_id(raw_href)
@@ -381,7 +419,14 @@ def scanner_thread(custom_url, source_type, processed_ids):
                     break
                 
                 current_page += 1
-                if current_page > 1000: current_page = 1
+                
+                # --- LOGIC LOOP ---
+                if loop_range:
+                    if current_page > loop_range[1]:
+                        print(f"\n[LOOP] Đã xong trang {loop_range[1]}. Quay lại trang {loop_range[0]}...")
+                        current_page = loop_range[0]
+                else:
+                    if current_page > 1000: current_page = 1
 
             except Exception as e:
                 synchronized_print(f"[Scanner] Lỗi quét: {e}")
@@ -390,14 +435,15 @@ def scanner_thread(custom_url, source_type, processed_ids):
     except Exception as e:
         synchronized_print(f"[Scanner] Crash: {e}")
     finally:
-        # KHÔNG ĐÓNG DRIVER
         stop_event.set() 
-        synchronized_print("[Scanner] Đã dừng chờ lệnh mới.")
+        synchronized_print("[Scanner] Đã dừng.")
 
-def run_concurrent_mode(custom_url, source_type):
+def run_concurrent_mode(custom_url, source_type, loop_range=None):
     processed_ids = load_history()
     print(f"\n[*] Đang khởi động chế độ SONG SONG (2 Trình duyệt)...")
-    print(f"[*] Nhấn phím 'q' để DỪNG (Trình duyệt sẽ giữ nguyên).")
+    if loop_range:
+        print(f"[*] Chế độ Loop: {loop_range[0]} -> {loop_range[1]}")
+    print(f"[*] Nhấn phím 'q' để DỪNG Scanner (Embedder sẽ chạy nốt phần còn lại).")
     print(f"[*] LƯU Ý: Bấm vào cửa sổ dòng lệnh (CMD) trước khi ấn 'q'.")
     
     stop_event.clear()
@@ -405,7 +451,7 @@ def run_concurrent_mode(custom_url, source_type):
         link_queue.queue.clear()
     
     t_embedder = threading.Thread(target=embedder_thread, args=(processed_ids,))
-    t_scanner = threading.Thread(target=scanner_thread, args=(custom_url, source_type, processed_ids))
+    t_scanner = threading.Thread(target=scanner_thread, args=(custom_url, source_type, processed_ids, loop_range))
     
     t_embedder.start()
     time.sleep(2) 
@@ -413,10 +459,10 @@ def run_concurrent_mode(custom_url, source_type):
     
     while t_scanner.is_alive() or t_embedder.is_alive():
         if msvcrt.kbhit() and msvcrt.getch().lower() == b'q':
-            print("\n[!!!] NHẬN LỆNH DỪNG TỪ BÀN PHÍM. ĐANG THOÁT NGAY...")
+            print("\n[!!!] NHẬN LỆNH DỪNG: Scanner dừng ngay, Embedder chạy nốt hàng đợi...")
             stop_event.set()
             time.sleep(1)
-            break
+            
         time.sleep(0.5)
         
         if stop_event.is_set() or (not t_scanner.is_alive() and link_queue.empty()):
@@ -429,25 +475,17 @@ def run_concurrent_mode(custom_url, source_type):
     print("[Main] Đã dừng. (Chrome vẫn mở để bạn dùng tiếp).")
 
 def open_both_browsers_only():
-    """Mở cả 2 trình duyệt Scanner và Embedder rồi treo đó"""
     global global_scanner_driver, global_embedder_driver
-    
     print("\n[*] Đang khởi động/kiểm tra 2 trình duyệt...")
-    
-    # 1. Scanner Driver
     print("   -> Scanner Driver (Trái)...")
     global_scanner_driver = get_active_driver(global_scanner_driver, position=(0, 0))
     try:
-        # Mở trang trắng
         if "data:," in global_scanner_driver.current_url:
              global_scanner_driver.get("about:blank")
     except: pass
 
-    # 2. Embedder Driver
     print("   -> Embedder Driver (Phải)...")
     global_embedder_driver = get_active_driver(global_embedder_driver, position=(960, 0))
-    
-    # Login STV cho Embedder
     driver = global_embedder_driver
     print("   -> Đang vào Sangtacviet...")
     try:
@@ -482,16 +520,20 @@ def main():
         print("   3. 🐱 Chạy nguồn Qimao (Thất Miêu)")
         print("   4. 🦔 Chạy nguồn Ciweimao (Thất Vĩ Miêu)")
         print("   5. 🍍 Chạy nguồn SFACG (B菠萝包)")
+        print("   6. 📖 Chạy nguồn 69shu (Lục Cửu)")
+        print("   7. 📚 Chạy nguồn Quanben5 (Toàn Bản 5)")
+        print("   8. ♾️  Chạy Fanqie (Loop 700 -> 3000) [MỚI]")
         print("-----------------------------------------------------------------------")
-        print("   6. 🖥️  Mở 2 Trình duyệt (Scanner & Embedder) để treo")
-        print("   7. 📊 Xem tổng số ID đã làm")
-        print("   8. ❌ Thoát (Đóng tất cả)")
+        print("   9. 🖥️  Mở 2 Trình duyệt (Scanner & Embedder) để treo")
+        print("   10. 📊 Xem tổng số ID đã làm")
+        print("   0.  ❌ Thoát (Đóng tất cả)")
         print("=======================================================================")
         
-        choice = input("👉 Chọn chức năng (1-8): ").strip()
+        choice = input("👉 Chọn chức năng (0-10): ").strip()
         
         url = None
         stype = None
+        loop_cfg = None
         
         if choice == '1':
             url = input("\n🔗 Nhập Link Fanqie: ").strip()
@@ -509,19 +551,34 @@ def main():
             url = input("\n🔗 Nhập Link SFACG: ").strip()
             stype = "sfacg"
         elif choice == '6':
-            open_both_browsers_only()
+            print("\n🔗 Nhập Link 69shu:")
+            print("   Ví dụ: https://www.69shuba.com/novels/class/0.htm")
+            url = input("   Link: ").strip()
+            stype = "69shu"
         elif choice == '7':
+            print("\n🔗 Nhập Link Quanben5:")
+            print("   Ví dụ: https://big5.quanben5.com/category/1.html")
+            url = input("   Link: ").strip()
+            stype = "quanben5"
+        elif choice == '8':
+            # Mặc định link thư viện Fanqie
+            url = "https://fanqienovel.com/library/audience1-cat2-19-stat1-count0/page_700?sort=newest"
+            stype = "fanqie"
+            loop_cfg = (700, 3000)
+        elif choice == '9':
+            open_both_browsers_only()
+        elif choice == '10':
             current_ids = load_history()
             print(f"\n[INFO] Tổng số truyện (ID) đã lưu trong file: {len(current_ids)}")
             print(f"File lưu tại: {HISTORY_FILE}")
             input("\n-> Nhấn Enter để quay lại Menu...")
-        elif choice == '8':
+        elif choice == '0':
             close_all_drivers()
             print("👋 Tạm biệt!")
             break
             
         if url and stype:
-            run_concurrent_mode(url, stype)
+            run_concurrent_mode(url, stype, loop_range=loop_cfg)
             input("\n-> Enter về Menu...")
 
 if __name__ == "__main__":
