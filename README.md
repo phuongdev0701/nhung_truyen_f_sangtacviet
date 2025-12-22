@@ -1,93 +1,123 @@
-Auto Novel Embedder (Fanqie, Jjwxc, Qimao, Ciweimao -> Sangtacviet)
+uto Novel Embedder Ultimate (Fanqie, Jjwxc, Qimao, Ciweimao, SFACG, 69shu, Quanben5 -> Sangtacviet)
 
-Tool tự động hóa quy trình nhúng truyện từ các nguồn truyện Trung Quốc phổ biến (Fanqie, Jjwxc, Qimao, Ciweimao) sang hệ thống Sangtacviet.app sử dụng Python và Selenium.
+Tool tự động hóa quy trình nhúng truyện từ 7 nguồn truyện Trung Quốc phổ biến sang hệ thống Sangtacviet.app sử dụng Python và Selenium.
 
-🌟 Tính năng Chính
+Phiên bản này sử dụng kiến trúc Đa Luồng (Multi-threading) với 2 trình duyệt chạy song song để đạt tốc độ tối đa.
 
-Đa Nguồn Truyện: Hỗ trợ quét và nhúng từ 4 nguồn lớn:
+🌟 Tính Năng Nổi Bật
 
-🍅 Fanqie (Cà Chua): Tự động lọc truyện mới (cập nhật <= 2 ngày).
+1. Hỗ Trợ 7 Nguồn Truyện Lớn
 
-🌿 Jjwxc (Tấn Giang): Hỗ trợ quét theo danh sách tác giả hoặc bảng xếp hạng.
+🍅 Fanqie (Cà Chua): Hỗ trợ lọc truyện mới (<= 2 ngày), chế độ chạy vòng lặp vô tận.
 
-🐱 Qimao (Thất Miêu): Tự động nhận diện và quét danh sách truyện.
+🌿 Jjwxc (Tấn Giang): Quét theo danh sách tác giả hoặc bảng xếp hạng.
 
-🦔 Ciweimao (Thất Vĩ Miêu/Hedgehog Cat): Hỗ trợ quét danh sách truyện.
+🐱 Qimao (Thất Miêu): Tự động nhận diện và quét danh sách.
 
-Tự Động Phân Trang (Auto-Pagination): Tự động chuyển sang trang tiếp theo (Page 1 -> Page 2 -> ...) cho đến khi hết truyện hoặc người dùng dừng.
+🦔 Ciweimao (Thất Vĩ Miêu): Hỗ trợ quét danh sách phân loại.
 
-Bộ Lọc Thông Minh:
+🍍 SFACG (B菠萝包): Hỗ trợ quét theo trang (PageIndex).
 
-Tự động bỏ qua các truyện đã nhúng (Check trùng ID).
+📖 69shu (Lục Cửu): Hỗ trợ quét truyện lẻ hoặc danh sách.
 
-Chỉ nhúng truyện có chương mới cập nhật gần đây (với nguồn Fanqie).
+📚 Quanben5 (Toàn Bản 5): Hỗ trợ quét danh sách phân loại.
 
-Cơ Chế Chống Treo & Chặn (Anti-Crash):
+2. Kiến Trúc Song Song (Parallel Processing)
 
-Tự động reset tab trình duyệt nếu trang web load quá lâu (> 30s).
+Tool chạy 2 cửa sổ Chrome cùng lúc:
 
-Tự động thử lại khi gặp lỗi kết nối.
+Scanner (Trình duyệt Trái): Chuyên đi quét link truyện mới từ nguồn.
 
-Giao Diện Menu Console: Dễ dàng lựa chọn nguồn và chế độ chạy.
+Embedder (Trình duyệt Phải): Chuyên túc trực tại Sangtacviet để nhúng link ngay khi nhận được từ Scanner.
 
-Điều Khiển: Nhấn phím q để dừng tool an toàn bất cứ lúc nào.
+Ưu điểm: Không phải chờ đợi chuyển đổi tab, tận dụng tối đa thời gian.
 
-🛠️ Yêu cầu Hệ thống
+3. Cơ Chế Thông Minh & An Toàn
 
-Hệ điều hành: Windows (Tool sử dụng thư viện msvcrt chỉ có trên Windows).
+Fast Mode & Anti-1015 (Menu 1 & 8): Chế độ đặc biệt cho Fanqie.
 
-Python 3.x đã được cài đặt.
+Tự động phát hiện lỗi chặn 1015 (Rate Limit) của Cloudflare.
 
-Trình duyệt Google Chrome (Phiên bản mới nhất).
+Tự động ngủ đông 60 giây và thử lại nếu bị chặn.
 
-📦 Cài đặt
+Tự động bỏ qua (Skip) truyện lỗi để không làm treo tool.
 
-Cài đặt các thư viện Python cần thiết:
+Persistent Drivers (Giữ Profile): Khi bạn bấm dừng (q), trình duyệt KHÔNG TẮT. Bạn có thể giữ nguyên phiên đăng nhập để chạy tiếp link khác mà không cần login lại.
+
+Smart Filter:
+
+Tự động bỏ qua truyện đã nhúng (Check trùng ID trong file lịch sử).
+
+Chỉ lấy truyện có cập nhật mới (<= 2 ngày) đối với các nguồn hỗ trợ check ngày.
+
+Auto-Pagination: Tự động lật trang (Page 1 -> Page 2...) liên tục.
+
+🛠️ Yêu Cầu Hệ Thống
+
+Hệ điều hành: Windows (Tool sử dụng thư viện msvcrt để bắt phím tắt).
+
+Python: Phiên bản 3.7 trở lên.
+
+Google Chrome: Phiên bản mới nhất.
+
+📦 Cài Đặt
+
+Cài đặt thư viện Python:
 Mở CMD hoặc Terminal tại thư mục chứa tool và chạy lệnh:
 
 pip install selenium webdriver-manager
 
+
 Cấu hình Tài khoản:
-Mở file fanqie_to_stv_bot.py bằng trình soạn thảo (Notepad, VS Code...) và tìm đến dòng cấu hình tài khoản để điền thông tin của bạn:
+Mở file fanqie_to_stv_bot.py bằng trình soạn thảo (Notepad, VS Code...) tìm đến dòng:
 
 # --- CẤU HÌNH TÀI KHOẢN ---
-
-STV*USERNAME = "Tên*Đăng_Nhập_Của_Bạn"
+STV_USERNAME = "Tên_Đăng_Nhập_Của_Bạn"
 STV_PASSWORD = "Mật_Khẩu_Của_Bạn"
 
-Cấu hình Đường dẫn lưu lịch sử (Tùy chọn):
-Mặc định tool sẽ lưu file lịch sử tại D:\nhúng truyện fanqie, qidian,qimao. Bạn có thể sửa dòng HISTORY_DIR trong code nếu muốn lưu chỗ khác.
 
-🚀 Hướng dẫn Sử dụng
+Cấu hình Lưu trữ (Tùy chọn):
+Mặc định file lịch sử lưu tại D:\nhúng truyện fanqie, qidian,qimao\da_lam_xong.txt. Bạn có thể sửa biến HISTORY_DIR trong code nếu muốn đổi chỗ.
+
+🚀 Hướng Dẫn Sử Dụng
 
 Chạy tool bằng lệnh:
 
 python fanqie_to_stv_bot.py
 
-Menu Chức năng:
 
-1. Mở Sangtacviet: Mở trình duyệt để bạn đăng nhập thủ công (nếu cần) hoặc kiểm tra kết nối.
+Giải Thích Menu
 
-2. Chạy Auto (Nguồn Fanqie): Dán link danh sách truyện Fanqie (Ví dụ: trang tìm kiếm, trang phân loại). Tool sẽ quét trang đó và các trang tiếp theo.
+1. Chạy Fanqie (Cà Chua): (Khuyên dùng) Nhập link bất kỳ. Kích hoạt chế độ Fast Mode + Anti-1015.
 
-3. Chạy Auto (Nguồn Jjwxc): Dán link danh sách Tấn Giang (Link có chứa page=...).
+2 - 7. Chạy các nguồn khác: Nhập link danh sách tương ứng (xem ví dụ trong tool).
 
-4. Chạy Auto (Nguồn Qimao): Dán link thư viện Thất Miêu.
+8. Chạy Fanqie (Loop 700 -> 3000): Chế độ "cày cuốc". Tool tự động chạy từ trang 700 đến 3000, sau đó quay lại 700 và lặp lại mãi mãi.
 
-5. Chạy Auto (Nguồn Ciweimao): Dán link danh sách Thất Vĩ Miêu.
+9. Mở 2 Trình duyệt để treo: Chỉ mở 2 cửa sổ Chrome lên và tự động đăng nhập Sangtacviet, sau đó để yên cho bạn kiểm tra hoặc giữ session.
 
-6. Xem tổng số ID đã làm: Kiểm tra số lượng truyện đã được lưu vào file da_lam_xong.txt.
+10. Xem tổng số ID: Kiểm tra xem đã nhúng được bao nhiêu truyện.
 
-7. Thoát.
+0. Thoát: Đóng toàn bộ trình duyệt và tắt tool.
 
-Trong quá trình chạy:
+Cách Dừng Tool (Quan Trọng)
 
-Tool sẽ tự động mở trình duyệt Chrome và thực hiện các thao tác.
+Bấm vào cửa sổ dòng lệnh (CMD/Terminal).
 
-Để DỪNG tool: Nhấn vào cửa sổ dòng lệnh (CMD) và bấm phím q. Tool sẽ hoàn thành nốt truyện đang làm dở và dừng lại an toàn.
+Nhấn phím q trên bàn phím.
 
-📝 Lưu ý
+Cơ chế dừng:
 
-File Lịch sử (da_lam_xong.txt): File này chứa danh sách ID các truyện đã nhúng. Đừng xóa file này nếu bạn không muốn tool nhúng lại các truyện cũ.
+Scanner: Dừng quét ngay lập tức.
 
-Tốc độ mạng: Nếu mạng chậm, tool có thể báo lỗi Timeout. Nó sẽ tự động thử lại, nhưng bạn nên đảm bảo mạng ổn định để đạt tốc độ cao nhất.
+Embedder: Sẽ chạy nốt những truyện đang còn trong hàng đợi (Queue) để đảm bảo không bị sót, sau đó mới dừng hẳn.
+
+Lưu ý: Sau khi dừng, 2 cửa sổ Chrome vẫn mở. Bạn có thể chọn chức năng khác trên Menu để chạy tiếp ngay lập tức.
+
+⚠️ Lưu Ý Khi Sử Dụng
+
+Lỗi 1015 (Rate Limit): Nếu thấy dòng thông báo màu đỏ [!!!] BỊ CHẶN 1015, hãy để yên. Tool sẽ tự động nghỉ 60s rồi chạy lại. Đừng tắt tool vội.
+
+File Lịch sử (da_lam_xong.txt): Đây là "bộ nhớ" của tool. Nếu bạn xóa file này, tool sẽ nhúng lại từ đầu các truyện cũ.
+
+Tọa độ cửa sổ: Tool được cài đặt để mở 1 cửa sổ ở góc trái (0,0) và 1 cửa sổ ở góc phải (960,0). Đừng thay đổi kích thước màn hình quá nhiều để dễ quan sát.
