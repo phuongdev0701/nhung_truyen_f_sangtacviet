@@ -153,13 +153,16 @@ def check_is_recent(text_content):
 def embedder_thread(processed_ids, is_fast_mode=False):
     """
     Luồng chuyên nhúng truyện vào Sangtacviet.
-    is_fast_mode: True cho Menu 1 & 8 (Fanqie Fast + Anti-1015)
+    is_fast_mode: True cho Menu 1 & 8 (Fanqie) -> Tốc độ tối đa
     """
     global global_embedder_driver
     
     global_embedder_driver = get_active_driver(global_embedder_driver, position=(960, 0))
     driver = global_embedder_driver
     
+    # Biến đếm số lượng đã nhúng thành công trong phiên chạy này
+    session_success_count = 0
+
     try:
         wait = WebDriverWait(driver, 10)
         
@@ -193,51 +196,51 @@ def embedder_thread(processed_ids, is_fast_mode=False):
                     link_queue.task_done()
                     continue
 
-                synchronized_print(f"-> [Nhúng] ID: {book_id}")
+                # synchronized_print(f"-> [Nhúng] ID: {book_id}") # Bỏ bớt in log cho nhanh
                 
                 for attempt in range(2): 
                     try:
-                        # === LOGIC RIÊNG CHO MENU 1 & 8 (FAST MODE) ===
+                        # === LOGIC TỐC ĐỘ BÀN THỜ (FAST MODE) ===
                         if is_fast_mode:
-                            # 1. Chống 1015: Check Title
-                            if "Attention Required" in driver.title or "Cloudflare" in driver.title:
-                                synchronized_print("\n[!!!] BỊ CHẶN 1015. NGỦ ĐÔNG 60 GIÂY...")
+                            # 1. Chống 1015: Check Title nhanh
+                            if "Attention" in driver.title:
+                                synchronized_print("\n[!!!] BỊ CHẶN 1015. NGỦ ĐÔNG 60s...")
                                 time.sleep(60)
-                                driver.get(SANGTACVIET_URL) # Tải lại trang chủ
+                                driver.get(SANGTACVIET_URL)
                                 time.sleep(3)
                             
-                            # 2. Tìm ô input hiện tại
+                            # 2. Tìm ô input (Timeout cực ngắn)
                             driver.set_page_load_timeout(5)
                             search_box = None
                             try:
                                 search_box = driver.find_element(By.TAG_NAME, "input")
                             except:
-                                # Nếu không thấy ô input -> Reload
                                 driver.get(SANGTACVIET_URL)
                                 search_box = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.TAG_NAME, "input")))
                             
-                            # 3. Thao tác nhúng
+                            # 3. Thao tác nhúng (TỐI ƯU)
                             search_box.clear()
-                            try:
-                                search_box.send_keys(Keys.CONTROL + "a")
-                                search_box.send_keys(Keys.DELETE)
-                            except: pass
-                            search_box.send_keys(link)
                             
-                            # Random delay cực ngắn để giống người
-                            time.sleep(random.uniform(0.3, 0.7))
+                            # Dán link và Enter ngay lập tức (KHÔNG WAIT)
+                            search_box.send_keys(link)
                             search_box.send_keys(Keys.ENTER)
                             
-                            # 4. KHÔNG RELOAD NẾU KHÔNG CẦN THIẾT
-                            # Chỉ sleep ngắn để request kịp gửi đi
-                            time.sleep(0.5) 
+                            # Nghỉ siêu ngắn để server kịp nhận lệnh
+                            time.sleep(0.1) 
                             
                             save_history(book_id)
                             processed_ids.add(book_id)
-                            synchronized_print(f"   [OK] {book_id} (Fast).")
+                            session_success_count += 1
+                            
+                            # Lấy số lượng hàng chờ hiện tại
+                            current_qsize = link_queue.qsize()
+                            synchronized_print(f"   [OK #{session_success_count}] {book_id} (Fast) | Chờ: {current_qsize}")
+                            
+                            # Tùy chỉnh tốc độ: Giảm xuống 0.25s theo yêu cầu
+                            time.sleep(0.25) 
                             break
 
-                        # === LOGIC THƯỜNG CHO CÁC MENU KHÁC (ỔN ĐỊNH) ===
+                        # === LOGIC THƯỜNG ===
                         else:
                             driver.set_page_load_timeout(10)
                             search_box = None
@@ -257,17 +260,19 @@ def embedder_thread(processed_ids, is_fast_mode=False):
                             
                             time.sleep(0.5) 
                             try: driver.get(SANGTACVIET_URL)
-                            except: pass # Fire & Forget
+                            except: pass
                             
                             save_history(book_id)
                             processed_ids.add(book_id)
-                            synchronized_print(f"   [OK] {book_id}.")
+                            session_success_count += 1
+                            current_qsize = link_queue.qsize()
+                            synchronized_print(f"   [OK #{session_success_count}] {book_id} | Chờ: {current_qsize}")
                             break
                     
                     except Exception as e:
                         if is_fast_mode:
-                             if "Attention Required" in str(e) or "Cloudflare" in str(e):
-                                synchronized_print("\n[!!!] Lỗi 1015 (Exception). Ngủ 60s...")
+                             if "Attention" in str(e):
+                                synchronized_print("\n[!!!] Lỗi 1015. Ngủ 60s...")
                                 time.sleep(60)
                         try: 
                             if len(driver.window_handles) > 1: driver.close()
@@ -441,7 +446,6 @@ def scanner_thread(custom_url, source_type, processed_ids, loop_range=None):
                 
                 current_page += 1
                 
-                # --- LOGIC LOOP MENU 8 ---
                 if loop_range:
                     if current_page > loop_range[1]:
                         print(f"\n[LOOP] Đã xong trang {loop_range[1]}. Quay lại trang {loop_range[0]}...")
@@ -465,7 +469,7 @@ def run_concurrent_mode(custom_url, source_type, loop_range=None, is_fast_mode=F
     if loop_range:
         print(f"[*] Chế độ Loop: {loop_range[0]} -> {loop_range[1]}")
     if is_fast_mode:
-        print(f"[*] CHẾ ĐỘ FAST & ANTI-1015 ĐƯỢC KÍCH HOẠT.")
+        print(f"[*] CHẾ ĐỘ FAST (0.25s) & ANTI-1015 ĐƯỢC KÍCH HOẠT.")
     
     print(f"[*] Nhấn phím 'q' để DỪNG Scanner (Embedder sẽ chạy nốt phần còn lại).")
     print(f"[*] LƯU Ý: Bấm vào cửa sổ dòng lệnh (CMD) trước khi ấn 'q'.")
@@ -559,7 +563,7 @@ def main():
         url = None
         stype = None
         loop_cfg = None
-        fast_mode = False # Mặc định tắt Fast Mode
+        fast_mode = False 
         
         if choice == '1':
             url = input("\n🔗 Nhập Link Fanqie: ").strip()
@@ -605,7 +609,6 @@ def main():
             break
             
         if url and stype:
-            # Truyền tham số fast_mode vào hàm chạy
             run_concurrent_mode(url, stype, loop_range=loop_cfg, is_fast_mode=fast_mode)
             input("\n-> Enter về Menu...")
 
